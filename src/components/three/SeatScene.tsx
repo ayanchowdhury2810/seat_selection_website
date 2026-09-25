@@ -7,29 +7,66 @@ import * as THREE from "three";
 import { useSeatSelection } from "@/state/seat-selection-store";
 import { SeatInstanceManager, type SeatInstance } from "@/scene/seats/SeatInstanceManager";
 import { TheatreGenerator } from "@/scene/procedural/TheatreGenerator";
-import { dummySeatMapData } from "@/data/dummy-seat-map";
 import { normalizeSeatMap } from "@/data/seat-map-normalizer";
 import { mapJsonToWorld, MAP_SCALE, MAP_Z_OFFSET } from "@/utils/coordinates";
 import { SectionRenderer } from "@/scene/sections/SectionRenderer";
+import { largeStadiumSeatMapData } from "@/data/large-stadium-seat-map";
 
 const seatManager = new SeatInstanceManager();
 const SEAT_ELEVATION = 0.35;
 
-type TheatreProceduralConfig = {
-  stage_width: number;
-  stage_depth: number;
-  row_spacing: number;
-  seat_spacing: number;
-  tier_height: number;
-};
-
-function getProceduralConfig(seatMap: ReturnType<typeof normalizeSeatMap>): TheatreProceduralConfig {
-  const web3d = seatMap.web_3d as Record<string, unknown> | undefined;
-  const procedural = web3d?.procedural as Record<string, unknown> | undefined;
-  const theatre = procedural?.theatre;
-  return theatre && typeof theatre === "object"
-    ? (theatre as TheatreProceduralConfig)
-    : { stage_width: 16, stage_depth: 6, row_spacing: 0.9, seat_spacing: 0.55, tier_height: 0.35 };
+function buildVenueConfig(seatMap: ReturnType<typeof normalizeSeatMap>) {
+  const web3d = (seatMap.web_3d ?? {}) as Record<string, unknown>;
+  const venue = (web3d.venue ?? { type: "arena", model_type: "procedural" }) as {
+    type: "theatre" | "arena";
+    model_type: "procedural";
+  };
+  const coordinate_system = (web3d.coordinate_system ?? {
+    type: "right_handed",
+    units: "meters",
+  }) as { type: string; units: string };
+  const event_focus = (web3d.event_focus ?? {
+    type: venue.type === "arena" ? "ring" : "stage",
+    position: { x: 0, y: 1, z: 0 },
+  }) as { type: string; position: { x: number; y: number; z: number } };
+  const camera = (web3d.camera ?? { eye_height: 1.6, fov: 60 }) as {
+    eye_height: number;
+    fov: number;
+  };
+  const procedural = (web3d.procedural ?? {}) as Record<string, unknown>;
+  if (!procedural.theatre && !procedural.arena) {
+    procedural.theatre = {
+      stage_width: 16,
+      stage_depth: 6,
+      row_spacing: 0.9,
+      seat_spacing: 0.55,
+      tier_height: 0.35,
+    };
+  }
+  return {
+    enabled: true,
+    venue,
+    coordinate_system,
+    event_focus,
+    camera,
+    procedural: procedural as {
+      theatre?: {
+        stage_width: number;
+        stage_depth: number;
+        row_spacing: number;
+        seat_spacing: number;
+        tier_height: number;
+      };
+      arena?: {
+        ring_width: number;
+        ring_depth: number;
+        bowl_tiers: number;
+        row_spacing: number;
+        seat_spacing: number;
+        tier_height: number;
+      };
+    },
+  };
 }
 
 export function SeatScene() {
@@ -41,7 +78,7 @@ export function SeatScene() {
   const { camera, gl } = useThree();
   const canvas = gl.domElement;
 
-  const seatMap = useMemo(() => normalizeSeatMap(dummySeatMapData), []);
+  const seatMap = useMemo(() => normalizeSeatMap(largeStadiumSeatMapData), []);
 
   const ticketColors = useMemo(() => {
     const colors = new Map<number, string>();
@@ -65,20 +102,9 @@ export function SeatScene() {
     [seatMap, sectionRenderer]
   );
 
-  // Venue geometry, built once.
+  // Venue geometry, built once from the seat map's own web_3d config.
   useEffect(() => {
-    const theatre = getProceduralConfig(seatMap);
-    const venueGroup = new TheatreGenerator().generate(
-      {
-        enabled: true,
-        venue: { type: "theatre", model_type: "procedural" },
-        coordinate_system: { type: "right_handed", units: "meters" },
-        event_focus: { type: "stage", position: { x: 0, y: 1, z: -15 } },
-        camera: { eye_height: 1.2, fov: 65 },
-        procedural: { theatre },
-      },
-      seatMap
-    );
+    const venueGroup = new TheatreGenerator().generate(buildVenueConfig(seatMap), seatMap);
     if (sceneGroupRef.current) sceneGroupRef.current.add(venueGroup);
   }, [seatMap]);
 

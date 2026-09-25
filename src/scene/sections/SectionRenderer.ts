@@ -24,13 +24,27 @@ export class SectionRenderer {
     let minZ = Infinity;
     let maxZ = -Infinity;
 
-    for (const point of section.boundary) {
-      const world = mapJsonToWorld(point.x, point.y, canvasWidth, canvasHeight, scale, zOffset);
+    // The large-stadium data ships placeholder boundaries that do not contain
+    // the section seats, so expand the geometry over both boundary and seats.
+    const include = (x: number, y: number) => {
+      const world = mapJsonToWorld(x, y, canvasWidth, canvasHeight, scale, zOffset);
       minX = Math.min(minX, world.x);
       maxX = Math.max(maxX, world.x);
       minZ = Math.min(minZ, world.z);
       maxZ = Math.max(maxZ, world.z);
+    };
+
+    for (const point of section.boundary) include(point.x, point.y);
+    for (const row of section.rows) {
+      for (const seat of row.seats) include(seat.x, seat.y);
     }
+
+    // Pad so edge seats sit inside the clickable plane.
+    const pad = 1.5;
+    minX -= pad;
+    maxX += pad;
+    minZ -= pad;
+    maxZ += pad;
 
     const geom = {
       width: maxX - minX,

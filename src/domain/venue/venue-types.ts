@@ -35,9 +35,17 @@ export interface Venue3DConfig {
     fov: number;
   };
   procedural: {
-    theatre: {
+    theatre?: {
       stage_width: number;
       stage_depth: number;
+      row_spacing: number;
+      seat_spacing: number;
+      tier_height: number;
+    };
+    arena?: {
+      ring_width: number;
+      ring_depth: number;
+      bowl_tiers: number;
       row_spacing: number;
       seat_spacing: number;
       tier_height: number;

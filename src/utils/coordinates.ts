@@ -25,6 +25,68 @@ export function worldToScreen(
 export const MAP_SCALE = 0.02;
 export const MAP_Z_OFFSET = 8;
 
+export interface SeatMapWorldBounds {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+  centerX: number;
+  centerZ: number;
+  width: number;
+  depth: number;
+}
+
+type BoundsSectionLike = {
+  boundary: Array<{ x: number; y: number }>;
+  rows: Array<{ seats: Array<{ x: number; y: number }> }>;
+};
+
+export function computeSeatMapWorldBounds(
+  seatMap: {
+    canvas_width: number;
+    canvas_height: number;
+    sections: BoundsSectionLike[];
+  },
+  scale: number = MAP_SCALE,
+  zOffset: number = MAP_Z_OFFSET
+): SeatMapWorldBounds {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+
+  const include = (x: number, y: number) => {
+    const world = mapJsonToWorld(x, y, seatMap.canvas_width, seatMap.canvas_height, scale, zOffset);
+    minX = Math.min(minX, world.x);
+    maxX = Math.max(maxX, world.x);
+    minZ = Math.min(minZ, world.z);
+    maxZ = Math.max(maxZ, world.z);
+  };
+
+  for (const section of seatMap.sections) {
+    for (const point of section.boundary) include(point.x, point.y);
+    for (const row of section.rows) {
+      for (const seat of row.seats) include(seat.x, seat.y);
+    }
+  }
+
+  if (!Number.isFinite(minX)) {
+    minX = maxX = 0;
+    minZ = maxZ = zOffset;
+  }
+
+  return {
+    minX,
+    maxX,
+    minZ,
+    maxZ,
+    centerX: (minX + maxX) / 2,
+    centerZ: (minZ + maxZ) / 2,
+    width: maxX - minX,
+    depth: maxZ - minZ,
+  };
+}
+
 export function mapJsonToWorld(
   x: number,
   y: number,
