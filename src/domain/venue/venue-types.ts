@@ -1,8 +1,9 @@
 import * as THREE from "three";
 import type { SeatMap } from "@/domain/seat/seat-types";
+import type { SeatMapProjection } from "@/utils/coordinates";
 
 export interface ProceduralVenueGenerator {
-  generate(config: Venue3DConfig, seatMap: SeatMap): THREE.Group;
+  generate(config: Venue3DConfig, seatMap: SeatMap, projection?: SeatMapProjection): THREE.Group;
 }
 
 export type VenueType =

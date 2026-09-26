@@ -1,9 +1,17 @@
+import {
+  HOVER_SEAT_COLOR,
+  SELECTED_SEAT_COLOR,
+  STATUS_COLORS,
+} from "@/utils/colors";
+
 export function SeatLegend() {
   const items = [
-    { color: "#19A024", label: "Available" },
-    { color: "#FFA500", label: "Held" },
-    { color: "#DC143C", label: "Booked" },
-    { color: "#555555", label: "Unavailable" },
+    { color: STATUS_COLORS.AVAILABLE, label: "Available" },
+    { color: SELECTED_SEAT_COLOR, label: "Selected" },
+    { color: HOVER_SEAT_COLOR, label: "Hovered" },
+    { color: STATUS_COLORS.HELD, label: "Held" },
+    { color: STATUS_COLORS.BOOKED, label: "Booked" },
+    { color: STATUS_COLORS.UNAVAILABLE, label: "Unavailable" },
   ];
 
   return (

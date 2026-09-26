@@ -1,12 +1,17 @@
 import * as THREE from "three";
 import type { Seat } from "@/domain/seat/seat-types";
-import { SeatMaterials } from "./SeatMaterials";
+import { SeatMaterials, type SeatAppearance } from "./SeatMaterials";
 
 export interface SeatInstance {
   objectId: string;
   position: THREE.Vector3;
   color: string;
   status?: Seat["status"];
+}
+
+export interface BuildSeatOptions {
+  /** Edge length of a seat box. Must stay below the seat pitch or seats merge. */
+  size?: number;
 }
 
 export class SeatInstanceManager {
@@ -21,17 +26,19 @@ export class SeatInstanceManager {
     this.seatMaterials = new SeatMaterials();
   }
 
-  build(instances: SeatInstance[]): THREE.InstancedMesh {
+  build(instances: SeatInstance[], options: BuildSeatOptions = {}): THREE.InstancedMesh {
     this.dispose();
-    const geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+    const size = options.size ?? 0.5;
+    const geometry = new THREE.BoxGeometry(size, size, size);
     this.mesh = new THREE.InstancedMesh(geometry, this.seatMaterials.getForStatus(undefined), instances.length);
     this.mesh.castShadow = true;
+    this.mesh.frustumCulled = false;
 
     const dummy = new THREE.Object3D();
     let idx = 0;
 
     for (const instance of instances) {
-      dummy.position.set(instance.position.x, instance.position.y, instance.position.z);
+      dummy.position.copy(instance.position);
       dummy.updateMatrix();
       this.mesh.setMatrixAt(idx, dummy.matrix);
 
@@ -50,40 +57,50 @@ export class SeatInstanceManager {
 
     this.count = idx;
     this.mesh.instanceMatrix.needsUpdate = true;
-    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    this.flushColors();
     return this.mesh;
+  }
+
+  /**
+   * Repaints one seat. `normal` restores the ticket or status color it was built with.
+   */
+  setSeatAppearance(objectId: string, appearance: SeatAppearance): void {
+    const idx = this.seatToInstanceId.get(objectId);
+    if (idx === undefined || !this.mesh) return;
+    const base = this.seatColors.get(objectId) ?? `#${this.seatMaterials.getForStatus(undefined).color.getHexString()}`;
+    const color =
+      appearance === "selected"
+        ? `#${this.seatMaterials.getSelected().color.getHexString()}`
+        : appearance === "hovered"
+          ? `#${this.seatMaterials.getHover().color.getHexString()}`
+          : base;
+    this.mesh.setColorAt(idx, new THREE.Color(color));
+    this.flushColors();
   }
 
   updateSeatStatus(objectId: string, status: string | undefined): void {
     if (!this.mesh) return;
     const idx = this.seatToInstanceId.get(objectId);
-    if (idx === undefined || idx === null) return;
+    if (idx === undefined) return;
     const color =
       status && status !== "AVAILABLE"
         ? `#${this.seatMaterials.getForStatus(status).color.getHexString()}`
         : this.seatColors.get(objectId) ?? `#${this.seatMaterials.getForStatus(undefined).color.getHexString()}`;
+    this.seatColors.set(objectId, color);
     this.mesh.setColorAt(idx, new THREE.Color(color));
-    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    this.flushColors();
   }
 
   selectSeat(objectId: string): void {
-    if (!this.mesh) return;
-    const idx = this.seatToInstanceId.get(objectId);
-    if (idx === undefined) return;
-    const color = `#${this.seatMaterials.getSelected().color.getHexString()}`;
-    this.mesh.setColorAt(idx, new THREE.Color(color));
-    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    this.setSeatAppearance(objectId, "selected");
   }
 
   deselectSeat(objectId: string): void {
-    if (!this.mesh) return;
-    const idx = this.seatToInstanceId.get(objectId);
-    if (idx === undefined) return;
-    const color =
-      this.seatColors.get(objectId) ??
-      `#${this.seatMaterials.getForStatus(undefined).color.getHexString()}`;
-    this.mesh.setColorAt(idx, new THREE.Color(color));
-    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    this.setSeatAppearance(objectId, "normal");
+  }
+
+  hasSeat(objectId: string): boolean {
+    return this.seatToInstanceId.has(objectId);
   }
 
   getInstanceById(objectId: string): number | undefined {
@@ -110,5 +127,9 @@ export class SeatInstanceManager {
     this.seatToInstanceId.clear();
     this.seatColors.clear();
     this.count = 0;
+  }
+
+  private flushColors(): void {
+    if (this.mesh?.instanceColor) this.mesh.instanceColor.needsUpdate = true;
   }
 }

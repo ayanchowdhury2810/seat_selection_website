@@ -5,15 +5,10 @@ export const STATUS_COLORS: Record<string, string> = {
   UNAVAILABLE: "#555555",
 };
 
-export const TICKET_COLORS: Record<number, string> = {
-  1: "#19A024",
-  2: "#7DDC86",
-};
+/** Seat colors for user-driven states. Shared by the 3D materials and the legend. */
+export const SELECTED_SEAT_COLOR = "#FFD60A";
+export const HOVER_SEAT_COLOR = "#7DD3FC";
 
 export function getStatusColor(status: string | undefined): string {
   return STATUS_COLORS[status ?? "AVAILABLE"] ?? STATUS_COLORS.AVAILABLE;
-}
-
-export function getTicketColor(ticketTypeId: number | null): string {
-  return TICKET_COLORS[ticketTypeId ?? 0] ?? "#ffffff";
 }

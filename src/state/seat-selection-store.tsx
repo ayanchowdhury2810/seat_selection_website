@@ -1,10 +1,10 @@
 import { createContext, useContext, useReducer, useCallback, type ReactNode } from "react";
-import type { TicketType } from "@/domain/seat/seat-types";
 
 interface SeatSelectionState {
   selectedIds: string[];
   hoveredId: string | null;
-  materializedSectionIds: string[];
+  /** The one section whose individual seats are rendered. */
+  activeSectionId: string | null;
 }
 
 type SeatAction =
@@ -13,7 +13,7 @@ type SeatAction =
   | { type: "TOGGLE"; payload: string }
   | { type: "CLEAR" }
   | { type: "SET_HOVER"; payload: string | null }
-  | { type: "OPEN_SECTION"; payload: string };
+  | { type: "SET_ACTIVE_SECTION"; payload: string | null };
 
 function seatReducer(state: SeatSelectionState, action: SeatAction): SeatSelectionState {
   switch (action.type) {
@@ -35,30 +35,27 @@ function seatReducer(state: SeatSelectionState, action: SeatAction): SeatSelecti
     case "CLEAR":
       return { ...state, selectedIds: [] };
     case "SET_HOVER":
+      if (state.hoveredId === action.payload) return state;
       return { ...state, hoveredId: action.payload };
-    case "OPEN_SECTION": {
-      if (state.materializedSectionIds.includes(action.payload)) return state;
-      return {
-        ...state,
-        materializedSectionIds: [...state.materializedSectionIds, action.payload],
-      };
-    }
+    case "SET_ACTIVE_SECTION":
+      if (state.activeSectionId === action.payload) return state;
+      return { ...state, activeSectionId: action.payload };
     default:
       return state;
   }
 }
 
 interface SeatSelectionContextType extends SeatSelectionState {
-  dispatch: React.Dispatch<SeatAction>;
   selectSeat: (id: string) => void;
   deselectSeat: (id: string) => void;
   toggleSeat: (id: string) => void;
   clearSelection: () => void;
   setHovered: (id: string | null) => void;
+  /** Opens a section, or closes it when it is already the open one. */
   openSection: (id: string) => void;
+  closeSection: () => void;
   isSelected: (id: string) => boolean;
-  isSectionMaterialized: (id: string) => boolean;
-  maxSelectionCount: number;
+  isSectionActive: (id: string) => boolean;
 }
 
 const SeatSelectionContext = createContext<SeatSelectionContextType | null>(null);
@@ -67,33 +64,43 @@ export function SeatSelectionProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(seatReducer, {
     selectedIds: [],
     hoveredId: null,
-    materializedSectionIds: [],
+    activeSectionId: null,
   });
 
   const selectSeat = useCallback((id: string) => dispatch({ type: "SELECT", payload: id }), []);
   const deselectSeat = useCallback((id: string) => dispatch({ type: "DESELECT", payload: id }), []);
   const toggleSeat = useCallback((id: string) => dispatch({ type: "TOGGLE", payload: id }), []);
   const clearSelection = useCallback(() => dispatch({ type: "CLEAR" }), []);
-  const setHovered = useCallback((id: string | null) => dispatch({ type: "SET_HOVER", payload: id }), []);
-  const openSection = useCallback(
-    (id: string) => dispatch({ type: "OPEN_SECTION", payload: id }),
+  const setHovered = useCallback(
+    (id: string | null) => dispatch({ type: "SET_HOVER", payload: id }),
     []
+  );
+  const closeSection = useCallback(
+    () => dispatch({ type: "SET_ACTIVE_SECTION", payload: null }),
+    []
+  );
+  const openSection = useCallback(
+    (id: string) =>
+      dispatch({
+        type: "SET_ACTIVE_SECTION",
+        payload: state.activeSectionId === id ? null : id,
+      }),
+    [state.activeSectionId]
   );
 
   return (
     <SeatSelectionContext.Provider
       value={{
         ...state,
-        dispatch,
         selectSeat,
         deselectSeat,
         toggleSeat,
         clearSelection,
         setHovered,
         openSection,
+        closeSection,
         isSelected: (id: string) => state.selectedIds.includes(id),
-        isSectionMaterialized: (id: string) => state.materializedSectionIds.includes(id),
-        maxSelectionCount: 10,
+        isSectionActive: (id: string) => state.activeSectionId === id,
       }}
     >
       {children}

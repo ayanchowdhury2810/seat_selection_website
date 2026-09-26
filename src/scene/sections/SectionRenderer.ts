@@ -1,103 +1,86 @@
 import * as THREE from "three";
-import type { SeatMap } from "@/domain/seat/seat-types";
-import type { SectionBounds3D } from "@/domain/venue/venue-types";
-import { mapJsonToWorld } from "@/utils/coordinates";
+import type { SectionLayout } from "@/scene/venue-layout";
 
-export interface SectionWorldGeometry {
-  width: number;
-  height: number;
-  center: { x: number; y: number; z: number };
+export type SectionAppearance = "idle" | "active" | "dimmed";
+
+/** Unlit color used for the deck fill, so tier colors stay readable under the lights. */
+const IDLE_FILL_FACTOR = 0.42;
+const ACTIVE_FILL_FACTOR = 0.85;
+const DIMMED_FILL_FACTOR = 0.2;
+
+function mix(color: THREE.Color, factor: number): THREE.Color {
+  return color.clone().multiplyScalar(factor);
 }
 
+/**
+ * Turns a section's outline into drawable meshes:
+ * - a solid slab, which is the clickable surface;
+ * - a line loop on top, which keeps neighbouring sections readable.
+ */
 export class SectionRenderer {
-  private sectionBounds: Map<string, SectionBounds3D> = new Map();
-
-  computeWorldGeometry(
-    section: SeatMap["sections"][0],
-    canvasWidth: number,
-    canvasHeight: number,
-    scale: number,
-    zOffset: number
-  ): SectionWorldGeometry {
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minZ = Infinity;
-    let maxZ = -Infinity;
-
-    // The large-stadium data ships placeholder boundaries that do not contain
-    // the section seats, so expand the geometry over both boundary and seats.
-    const include = (x: number, y: number) => {
-      const world = mapJsonToWorld(x, y, canvasWidth, canvasHeight, scale, zOffset);
-      minX = Math.min(minX, world.x);
-      maxX = Math.max(maxX, world.x);
-      minZ = Math.min(minZ, world.z);
-      maxZ = Math.max(maxZ, world.z);
-    };
-
-    for (const point of section.boundary) include(point.x, point.y);
-    for (const row of section.rows) {
-      for (const seat of row.seats) include(seat.x, seat.y);
-    }
-
-    // Pad so edge seats sit inside the clickable plane.
-    const pad = 1.5;
-    minX -= pad;
-    maxX += pad;
-    minZ -= pad;
-    maxZ += pad;
-
-    const geom = {
-      width: maxX - minX,
-      height: maxZ - minZ,
-      center: { x: (minX + maxX) / 2, y: 0.02, z: (minZ + maxZ) / 2 },
-    };
-    this.sectionBounds.set(section.id, {
-      min: { x: minX, y: 0, z: minZ },
-      max: { x: maxX, y: 0, z: maxZ },
-    });
-    return geom;
-  }
-
-  createSectionMesh(
-    section: SeatMap["sections"][0],
-    canvasWidth: number,
-    canvasHeight: number,
-    scale: number,
-    zOffset: number,
-    color: string
+  createDeckMesh(
+    layout: SectionLayout,
+    deckHeight: number,
+    appearance: SectionAppearance
   ): THREE.Mesh {
-    const geometry = this.computeWorldGeometry(
-      section,
-      canvasWidth,
-      canvasHeight,
-      scale,
-      zOffset
-    );
-    const material = new THREE.MeshStandardMaterial({
-      color,
-      transparent: true,
-      opacity: 0.25,
-      side: THREE.DoubleSide,
+    const shape = new THREE.Shape();
+    // Shape space is (x, -z): the -90 deg X rotation below maps it back to world (x, z).
+    const [first, ...rest] = layout.outline;
+    shape.moveTo(first.x, -first.z);
+    for (const point of rest) shape.lineTo(point.x, -point.z);
+    shape.closePath();
+
+    const geometry = new THREE.ExtrudeGeometry(shape, {
+      depth: deckHeight,
+      bevelEnabled: false,
+      curveSegments: 1,
     });
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(geometry.width, geometry.height), material);
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(geometry.center.x, geometry.center.y, geometry.center.z);
-    mesh.userData.sectionId = section.id;
+    geometry.rotateX(-Math.PI / 2);
+
+    const base = new THREE.Color(layout.color);
+    const factor =
+      appearance === "active"
+        ? ACTIVE_FILL_FACTOR
+        : appearance === "dimmed"
+          ? DIMMED_FILL_FACTOR
+          : IDLE_FILL_FACTOR;
+
+    const mesh = new THREE.Mesh(
+      geometry,
+      new THREE.MeshStandardMaterial({
+        color: mix(base, factor),
+        roughness: 0.85,
+        metalness: 0.05,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1,
+      })
+    );
+    mesh.position.y = layout.elevation;
+    mesh.userData.sectionId = layout.id;
+    mesh.name = `deck-${layout.id}`;
     return mesh;
   }
 
-  getBounds(sectionId: string): SectionBounds3D | undefined {
-    return this.sectionBounds.get(sectionId);
+  createOutline(
+    layout: SectionLayout,
+    deckHeight: number,
+    appearance: SectionAppearance
+  ): THREE.LineLoop {
+    const points = layout.outline.map(
+      (point) => new THREE.Vector3(point.x, layout.elevation + deckHeight + 0.01, point.z)
+    );
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    const material = new THREE.LineBasicMaterial({
+      color: appearance === "active" ? "#ffffff" : new THREE.Color(layout.color).multiplyScalar(1.4),
+      transparent: true,
+      opacity: appearance === "dimmed" ? 0.35 : 1,
+    });
+    return new THREE.LineLoop(geometry, material);
   }
 
-  isSectionVisible(sectionId: string, cameraPosition: THREE.Vector3): boolean {
-    const bounds = this.sectionBounds.get(sectionId);
-    if (!bounds) return true;
-    const center = new THREE.Vector3(
-      (bounds.min.x + bounds.max.x) / 2,
-      0,
-      (bounds.min.z + bounds.max.z) / 2
-    );
-    return cameraPosition.distanceTo(center) < 50;
+  /** Font size that keeps a section label readable at any section size. */
+  getLabelFontSize(layout: SectionLayout): number {
+    return Math.min(2.4, Math.max(0.7, layout.radius * 0.32));
   }
 }

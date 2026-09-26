@@ -1,4 +1,7 @@
 import * as THREE from "three";
+import { HOVER_SEAT_COLOR, SELECTED_SEAT_COLOR, STATUS_COLORS } from "@/utils/colors";
+
+export type SeatAppearance = "normal" | "selected" | "hovered";
 
 export class SeatMaterials {
   private availableMaterial: THREE.MeshStandardMaterial;
@@ -9,36 +12,12 @@ export class SeatMaterials {
   private hoverMaterial: THREE.MeshStandardMaterial;
 
   constructor() {
-    this.availableMaterial = new THREE.MeshStandardMaterial({
-      color: 0x19A024,
-      emissive: 0x19A024,
-      emissiveIntensity: 0.1,
-    });
-    this.bookedMaterial = new THREE.MeshStandardMaterial({
-      color: 0xDC143C,
-      emissive: 0xDC143C,
-      emissiveIntensity: 0.1,
-    });
-    this.heldMaterial = new THREE.MeshStandardMaterial({
-      color: 0xFFA500,
-      emissive: 0xFFA500,
-      emissiveIntensity: 0.1,
-    });
-    this.unavailableMaterial = new THREE.MeshStandardMaterial({
-      color: 0x555555,
-      emissive: 0x555555,
-      emissiveIntensity: 0.05,
-    });
-    this.selectedMaterial = new THREE.MeshStandardMaterial({
-      color: 0xFFFF00,
-      emissive: 0xFFFF00,
-      emissiveIntensity: 0.3,
-    });
-    this.hoverMaterial = new THREE.MeshStandardMaterial({
-      color: 0xADD8E6,
-      emissive: 0xADD8E6,
-      emissiveIntensity: 0.2,
-    });
+    this.availableMaterial = this.create(STATUS_COLORS.AVAILABLE, 0.1);
+    this.bookedMaterial = this.create(STATUS_COLORS.BOOKED, 0.1);
+    this.heldMaterial = this.create(STATUS_COLORS.HELD, 0.1);
+    this.unavailableMaterial = this.create(STATUS_COLORS.UNAVAILABLE, 0.05);
+    this.selectedMaterial = this.create(SELECTED_SEAT_COLOR, 0.45);
+    this.hoverMaterial = this.create(HOVER_SEAT_COLOR, 0.35);
   }
 
   getForStatus(status: string | undefined): THREE.MeshStandardMaterial {
@@ -60,5 +39,13 @@ export class SeatMaterials {
 
   getHover(): THREE.MeshStandardMaterial {
     return this.hoverMaterial;
+  }
+
+  private create(color: string, emissiveIntensity: number): THREE.MeshStandardMaterial {
+    return new THREE.MeshStandardMaterial({
+      color,
+      emissive: color,
+      emissiveIntensity,
+    });
   }
 }
