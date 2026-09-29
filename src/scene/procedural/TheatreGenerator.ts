@@ -25,7 +25,7 @@ export class TheatreGenerator implements ProceduralVenueGenerator {
     group.add(floor);
 
     if (config.venue.type === "arena" || config.procedural.arena) {
-      group.add(this.buildArena(config, bounds.radius));
+      group.add(this.buildArena(config));
       return group;
     }
 
@@ -33,7 +33,7 @@ export class TheatreGenerator implements ProceduralVenueGenerator {
     return group;
   }
 
-  private buildArena(config: Venue3DConfig, radius: number): THREE.Group {
+  private buildArena(config: Venue3DConfig): THREE.Group {
     const group = new THREE.Group();
     const arena = config.procedural.arena;
     const ringWidth = arena?.ring_width ?? 6.1;
@@ -52,15 +52,6 @@ export class TheatreGenerator implements ProceduralVenueGenerator {
     );
     ring.position.y = 0.3;
     group.add(ring);
-
-    const wallHeight = (arena?.bowl_tiers ?? 1) * (arena?.tier_height ?? 0.4) + 2.5;
-    const outerRadius = radius + 3;
-    const wall = new THREE.Mesh(
-      new THREE.CylinderGeometry(outerRadius, outerRadius, wallHeight, 64, 1, true),
-      new THREE.MeshStandardMaterial({ color: 0x111827, side: THREE.BackSide })
-    );
-    wall.position.y = wallHeight / 2 - 0.1;
-    group.add(wall);
 
     return group;
   }

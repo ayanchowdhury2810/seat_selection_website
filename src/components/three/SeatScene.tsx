@@ -47,7 +47,7 @@ export function SeatScene() {
   const raycasterRef = useRef(new THREE.Raycaster());
   const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
 
-  const { toggleSeat, setHovered, hoveredId, selectedIds, activeSectionId, openSection } =
+  const { setHovered, hoveredId, selectedIds, activeSectionId, openSection, openSeatModal, closeSeatModal } =
     useSeatSelection();
   const { camera, gl } = useThree();
 
@@ -190,12 +190,30 @@ export function SeatScene() {
       const mesh = seatManager.getMesh();
       if (mesh) {
         const seatHits = raycaster.intersectObject(mesh, false);
+        const hit = seatHits[0];
         const objectId =
-          seatHits[0]?.instanceId !== undefined
-            ? seatManager.getSeatById(seatHits[0].instanceId)
+          hit?.instanceId !== undefined
+            ? seatManager.getSeatById(hit.instanceId)
             : undefined;
-        if (objectId) {
-          toggleSeat(objectId);
+        if (objectId && hit) {
+          // Open confirm modal above seat instead of selecting directly.
+          const native = event.nativeEvent as MouseEvent;
+          const rect = gl.domElement.getBoundingClientRect();
+          const placement = activeLayout?.seats.find((s) => s.objectId === objectId);
+          const seatY =
+            (activeLayout ? activeLayout.elevation : 0) +
+            layout.deckHeight +
+            layout.seatBoxSize / 2 +
+            0.02;
+          openSeatModal({
+            objectId,
+            screenX: native.clientX - rect.left,
+            screenY: native.clientY - rect.top,
+            worldX: placement?.x ?? hit.point.x,
+            worldY: seatY,
+            worldZ: placement?.z ?? hit.point.z,
+            status: placement?.status,
+          });
           return;
         }
       }
@@ -203,10 +221,14 @@ export function SeatScene() {
       if (deckGroupRef.current) {
         const deckHits = raycaster.intersectObjects(deckGroupRef.current.children, false);
         const sectionId = deckHits[0]?.object.userData.sectionId as string | undefined;
-        if (sectionId) openSection(sectionId);
+        if (sectionId) {
+          openSection(sectionId);
+          return;
+        }
       }
+      closeSeatModal();
     },
-    [camera, getPointerNdc, toggleSeat, openSection]
+    [camera, getPointerNdc, openSection, openSeatModal, closeSeatModal, activeLayout, layout, gl]
   );
 
   const handlePointerMove = useCallback(

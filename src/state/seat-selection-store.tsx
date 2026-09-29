@@ -1,10 +1,33 @@
 import { createContext, useContext, useReducer, useCallback, type ReactNode } from "react";
 
+export interface PendingSeat {
+  objectId: string;
+  /** Modal anchor, pixels relative to canvas container. */
+  screenX: number;
+  screenY: number;
+  /** Seat box center in world space. */
+  worldX: number;
+  worldY: number;
+  worldZ: number;
+  status?: string;
+}
+
+export interface PovSeat {
+  objectId: string;
+  worldX: number;
+  worldY: number;
+  worldZ: number;
+}
+
 interface SeatSelectionState {
   selectedIds: string[];
   hoveredId: string | null;
   /** The one section whose individual seats are rendered. */
   activeSectionId: string | null;
+  /** Seat clicked but not yet confirmed; modal open. */
+  pendingSeat: PendingSeat | null;
+  /** Seat whose point of view camera is showing. */
+  povSeat: PovSeat | null;
 }
 
 type SeatAction =
@@ -13,7 +36,9 @@ type SeatAction =
   | { type: "TOGGLE"; payload: string }
   | { type: "CLEAR" }
   | { type: "SET_HOVER"; payload: string | null }
-  | { type: "SET_ACTIVE_SECTION"; payload: string | null };
+  | { type: "SET_ACTIVE_SECTION"; payload: string | null }
+  | { type: "SET_PENDING_SEAT"; payload: PendingSeat | null }
+  | { type: "SET_POV_SEAT"; payload: PovSeat | null };
 
 function seatReducer(state: SeatSelectionState, action: SeatAction): SeatSelectionState {
   switch (action.type) {
@@ -40,6 +65,12 @@ function seatReducer(state: SeatSelectionState, action: SeatAction): SeatSelecti
     case "SET_ACTIVE_SECTION":
       if (state.activeSectionId === action.payload) return state;
       return { ...state, activeSectionId: action.payload };
+    case "SET_PENDING_SEAT":
+      if (state.pendingSeat?.objectId === action.payload?.objectId && action.payload !== null) return state;
+      return { ...state, pendingSeat: action.payload };
+    case "SET_POV_SEAT":
+      if (state.povSeat?.objectId === action.payload?.objectId && action.payload !== null) return state;
+      return { ...state, povSeat: action.payload };
     default:
       return state;
   }
@@ -54,6 +85,11 @@ interface SeatSelectionContextType extends SeatSelectionState {
   /** Opens a section, or closes it when it is already the open one. */
   openSection: (id: string) => void;
   closeSection: () => void;
+  openSeatModal: (seat: PendingSeat) => void;
+  closeSeatModal: () => void;
+  /** Moves pending seat into POV mode and closes modal. */
+  viewSeatPov: () => void;
+  exitPov: () => void;
   isSelected: (id: string) => boolean;
   isSectionActive: (id: string) => boolean;
 }
@@ -65,6 +101,8 @@ export function SeatSelectionProvider({ children }: { children: ReactNode }) {
     selectedIds: [],
     hoveredId: null,
     activeSectionId: null,
+    pendingSeat: null,
+    povSeat: null,
   });
 
   const selectSeat = useCallback((id: string) => dispatch({ type: "SELECT", payload: id }), []);
@@ -76,16 +114,44 @@ export function SeatSelectionProvider({ children }: { children: ReactNode }) {
     []
   );
   const closeSection = useCallback(
-    () => dispatch({ type: "SET_ACTIVE_SECTION", payload: null }),
+    () => {
+      dispatch({ type: "SET_ACTIVE_SECTION", payload: null });
+      dispatch({ type: "SET_PENDING_SEAT", payload: null });
+      dispatch({ type: "SET_POV_SEAT", payload: null });
+    },
     []
   );
   const openSection = useCallback(
-    (id: string) =>
+    (id: string) => {
+      dispatch({ type: "SET_PENDING_SEAT", payload: null });
+      dispatch({ type: "SET_POV_SEAT", payload: null });
       dispatch({
         type: "SET_ACTIVE_SECTION",
         payload: state.activeSectionId === id ? null : id,
-      }),
+      });
+    },
     [state.activeSectionId]
+  );
+  const openSeatModal = useCallback(
+    (seat: PendingSeat) => {
+      dispatch({ type: "SET_POV_SEAT", payload: null });
+      dispatch({ type: "SET_PENDING_SEAT", payload: seat });
+    },
+    []
+  );
+  const closeSeatModal = useCallback(
+    () => dispatch({ type: "SET_PENDING_SEAT", payload: null }),
+    []
+  );
+  const viewSeatPov = useCallback(() => {
+    if (!state.pendingSeat) return;
+    const { objectId, worldX, worldY, worldZ } = state.pendingSeat;
+    dispatch({ type: "SET_PENDING_SEAT", payload: null });
+    dispatch({ type: "SET_POV_SEAT", payload: { objectId, worldX, worldY, worldZ } });
+  }, [state.pendingSeat]);
+  const exitPov = useCallback(
+    () => dispatch({ type: "SET_POV_SEAT", payload: null }),
+    []
   );
 
   return (
@@ -99,6 +165,10 @@ export function SeatSelectionProvider({ children }: { children: ReactNode }) {
         setHovered,
         openSection,
         closeSection,
+        openSeatModal,
+        closeSeatModal,
+        viewSeatPov,
+        exitPov,
         isSelected: (id: string) => state.selectedIds.includes(id),
         isSectionActive: (id: string) => state.activeSectionId === id,
       }}
