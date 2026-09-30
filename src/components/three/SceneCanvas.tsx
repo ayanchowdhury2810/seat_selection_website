@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { Component, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentRef, type ReactNode } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import { SeatScene } from "./SeatScene";
-import { getVenueLayout } from "@/scene/venue-layout";
-import { largeStadiumSeatMapData } from "@/data/large-stadium-seat-map";
+import { getVenueLayout, type VenueLayout } from "@/scene/venue-layout";
+import type { RawSeatMap } from "@/data/seat-map-schema";
 import { useSeatSelection } from "@/state/seat-selection-store";
 import { isSelectable } from "@/domain/seat/seat-status";
 
@@ -14,14 +14,71 @@ function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
+/** Shows a readable message in the viewport when the 3D tree crashes. */
+class CanvasErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
+  state = { error: null as string | null };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error: error instanceof Error ? error.message : "Unknown 3D error" };
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-zinc-950 p-6 text-center">
+          <p className="text-sm text-red-300">3D scene failed: {this.state.error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="rounded-md bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-500"
+          >
+            Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/** Surfaces GPU context loss in-page instead of a silent blank canvas. */
+function GlContextWatcher({
+  onLost,
+  onRestored,
+}: {
+  onLost: () => void;
+  onRestored: () => void;
+}) {
+  const gl = useThree((s) => s.gl);
+
+  useEffect(() => {
+    const canvas = gl.domElement;
+    const handleLost = (event: Event) => {
+      event.preventDefault();
+      onLost();
+    };
+    canvas.addEventListener("webglcontextlost", handleLost);
+    canvas.addEventListener("webglcontextrestored", onRestored);
+    return () => {
+      canvas.removeEventListener("webglcontextlost", handleLost);
+      canvas.removeEventListener("webglcontextrestored", onRestored);
+    };
+  }, [gl, onLost, onRestored]);
+
+  return null;
+}
+
+/** OrbitControls instance driven by the camera rig. */
+export type CameraControlsHandle = ComponentRef<typeof OrbitControls>;
+
 function CameraFocusRig({
   controlsRef,
+  layout,
 }: {
-  controlsRef: React.RefObject<any>;
+  controlsRef: React.RefObject<CameraControlsHandle | null>;
+  layout: VenueLayout;
 }) {
   const { camera } = useThree();
   const { activeSectionId, povSeat } = useSeatSelection();
-  const layout = useMemo(() => getVenueLayout(largeStadiumSeatMapData), []);
   const prevPovId = useRef<string | null>(null);
   const anim = useRef<{
     t: number;
@@ -206,10 +263,14 @@ function PovBanner() {
   );
 }
 
-export function SceneCanvas() {
-  const controlsRef = useRef<any>(null);
+export function SceneCanvas({ raw }: { raw: RawSeatMap }) {
+  const controlsRef = useRef<CameraControlsHandle | null>(null);
+  const layout = useMemo(() => getVenueLayout(raw), [raw]);
+  const [glLost, setGlLost] = useState(false);
+  const handleGlLost = useCallback(() => setGlLost(true), []);
+  const handleGlRestored = useCallback(() => setGlLost(false), []);
   const view = useMemo(() => {
-    const { bounds } = getVenueLayout(largeStadiumSeatMapData);
+    const { bounds } = layout;
     const fov = 60;
     const span = Math.max(bounds.width, bounds.depth, 20);
     // Pull the camera back far enough to frame the whole bowl at the given field of view.
@@ -225,33 +286,51 @@ export function SceneCanvas() {
       minDistance: 1.5,
       fov,
     };
-  }, []);
+  }, [layout]);
 
   return (
     <div className="relative" style={{ width: "100%", height: "100%", background: "#0a0a0a" }}>
-      <Canvas camera={{ fov: view.fov, position: view.position, near: 0.1, far: 4000 }}>
-        <ambientLight intensity={1.1} />
-        <hemisphereLight args={["#cbd5e1", "#0f172a", 0.8]} />
-        <directionalLight position={[40, 80, 40]} intensity={1.4} />
-        <SeatScene />
-        <OrbitControls
-          ref={controlsRef}
-          makeDefault
-          target={view.target}
-          enableDamping
-          dampingFactor={0.08}
-          enablePan
-          enableZoom
-          enableRotate
-          screenSpacePanning
-          zoomToCursor
-          minDistance={view.minDistance}
-          maxDistance={view.maxDistance}
-          minPolarAngle={0}
-          maxPolarAngle={Math.PI / 2 - 0.02}
-        />
-        <CameraFocusRig controlsRef={controlsRef} />
-      </Canvas>
+      <CanvasErrorBoundary>
+        <Canvas camera={{ fov: view.fov, position: view.position, near: 0.1, far: 4000 }}>
+          <ambientLight intensity={1.1} />
+          <hemisphereLight args={["#cbd5e1", "#0f172a", 0.8]} />
+          <directionalLight position={[40, 80, 40]} intensity={1.4} />
+          <Suspense fallback={null}>
+            <SeatScene raw={raw} />
+          </Suspense>
+          <OrbitControls
+            ref={controlsRef}
+            makeDefault
+            target={view.target}
+            enableDamping
+            dampingFactor={0.08}
+            enablePan
+            enableZoom
+            enableRotate
+            screenSpacePanning
+            zoomToCursor
+            minDistance={view.minDistance}
+            maxDistance={view.maxDistance}
+            minPolarAngle={0}
+            maxPolarAngle={Math.PI / 2 - 0.02}
+          />
+          <CameraFocusRig controlsRef={controlsRef} layout={layout} />
+          <GlContextWatcher onLost={handleGlLost} onRestored={handleGlRestored} />
+        </Canvas>
+      </CanvasErrorBoundary>
+      {glLost && (
+        <div className="absolute inset-x-0 top-3 z-10 flex justify-center">
+          <div className="flex items-center gap-3 rounded-full border border-amber-700 bg-zinc-900/95 py-1.5 pl-4 pr-1.5 shadow-xl">
+            <p className="text-xs text-amber-200">3D context lost — canvas paused.</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="rounded-full bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-500"
+            >
+              Reload
+            </button>
+          </div>
+        </div>
+      )}
       <SeatModalOverlay />
       <PovBanner />
     </div>

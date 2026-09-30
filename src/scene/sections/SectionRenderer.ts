@@ -8,6 +8,14 @@ const IDLE_FILL_FACTOR = 0.42;
 const ACTIVE_FILL_FACTOR = 0.85;
 const DIMMED_FILL_FACTOR = 0.2;
 
+function safeColor(value: string): THREE.Color {
+  try {
+    return new THREE.Color(value);
+  } catch {
+    return new THREE.Color("#94a3b8");
+  }
+}
+
 function mix(color: THREE.Color, factor: number): THREE.Color {
   return color.clone().multiplyScalar(factor);
 }
@@ -37,7 +45,7 @@ export class SectionRenderer {
     });
     geometry.rotateX(-Math.PI / 2);
 
-    const base = new THREE.Color(layout.color);
+    const base = safeColor(layout.color);
     const factor =
       appearance === "active"
         ? ACTIVE_FILL_FACTOR
@@ -72,7 +80,7 @@ export class SectionRenderer {
     );
     const geometry = new THREE.BufferGeometry().setFromPoints(points);
     const material = new THREE.LineBasicMaterial({
-      color: appearance === "active" ? "#ffffff" : new THREE.Color(layout.color).multiplyScalar(1.4),
+      color: appearance === "active" ? "#ffffff" : safeColor(layout.color).multiplyScalar(1.4),
       transparent: true,
       opacity: appearance === "dimmed" ? 0.35 : 1,
     });

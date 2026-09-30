@@ -132,13 +132,25 @@ function buildVenueLayout(raw: RawSeatMap): VenueLayout {
 
     // Hull helpers work in 2D, so the floor plane is treated as (x, z).
     const flat = points.map((p) => ({ x: p.x, y: p.z }));
-    const padded = expandPolygon(computeConvexHull(flat), style.seatSpacing * 1.4);
     const centroid = polygonCentroid(flat);
+    let padded = flat.length >= 3 ? expandPolygon(computeConvexHull(flat), style.seatSpacing * 1.4) : [];
+    if (padded.length < 3) {
+      // Empty / degenerate section: render a small clickable square so the
+      // section still appears instead of crashing ExtrudeGeometry.
+      const half = Math.max(style.seatSpacing, 0.5);
+      padded = [
+        { x: centroid.x - half, y: centroid.y - half },
+        { x: centroid.x + half, y: centroid.y - half },
+        { x: centroid.x + half, y: centroid.y + half },
+        { x: centroid.x - half, y: centroid.y + half },
+      ];
+    }
     const outline = padded.map((p) => ({ x: p.x, z: p.y }));
-    const radius = Math.max(
-      ...flat.map((p) => Math.hypot(p.x - centroid.x, p.y - centroid.y)),
-      0.001
-    );
+    let radius = 0.001;
+    for (const p of flat) {
+      const d = Math.hypot(p.x - centroid.x, p.y - centroid.y);
+      if (d > radius) radius = d;
+    }
 
     const id = ticketTypeId ?? -1;
     ticketRadius.set(id, (ticketRadius.get(id) ?? 0) + radius * Math.max(seats.length, 1));
@@ -187,14 +199,28 @@ function buildVenueLayout(raw: RawSeatMap): VenueLayout {
 }
 
 let cached: { raw: RawSeatMap; layout: VenueLayout } | null = null;
+const layoutCache = new WeakMap<RawSeatMap, VenueLayout>();
 
 /**
  * Single source of truth for everything the 3D scene needs.
- * Cached per raw seat map, so the canvas and the scene share one computation.
+ * Cached per raw seat map object, so repeated renders share one computation
+ * and switching between events does not return a stale venue.
  */
 export function getVenueLayout(raw: RawSeatMap): VenueLayout {
-  if (cached && cached.raw === raw) return cached.layout;
+  const hit = layoutCache.get(raw);
+  if (hit) return hit;
+  // Back-compat fast path for the previous single-entry cache shape.
+  if (cached && cached.raw === raw) {
+    layoutCache.set(raw, cached.layout);
+    return cached.layout;
+  }
   const layout = buildVenueLayout(raw);
+  layoutCache.set(raw, layout);
   cached = { raw, layout };
   return layout;
+}
+
+/** Test / HMR helper. WeakMap entries GC on their own; this clears the legacy slot. */
+export function clearVenueLayoutCache(): void {
+  cached = null;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useMemo, useCallback } from "react";
+import { useEffect, useRef, useMemo, useCallback, Suspense } from "react";
 import { useThree } from "@react-three/fiber";
 import { Text } from "@react-three/drei";
 import * as THREE from "three";
@@ -10,14 +10,45 @@ import type { SeatAppearance } from "@/scene/seats/SeatMaterials";
 import { TheatreGenerator } from "@/scene/procedural/TheatreGenerator";
 import { SectionRenderer, type SectionAppearance } from "@/scene/sections/SectionRenderer";
 import { getVenueLayout, type SectionLayout } from "@/scene/venue-layout";
-import { largeStadiumSeatMapData } from "@/data/large-stadium-seat-map";
+import type { RawSeatMap } from "@/data/seat-map-schema";
 import { projectSeatToWorld } from "@/utils/coordinates";
 import type { Venue3DConfig } from "@/domain/venue/venue-types";
 
-const seatManager = new SeatInstanceManager();
+interface SeatSceneProps {
+  raw: RawSeatMap;
+}
 
 /** Pointer travel, in pixels, above which a click counts as a camera drag. */
 const DRAG_TOLERANCE_PX = 5;
+
+/**
+ * Diagnostic toggles for isolating GPU context loss.
+ * `?noall=1` strips venue, decks, and labels (lights + controls only).
+ * `?novenue=1`, `?nodecks=1`, `?nolabels=1` strip one piece.
+ * Temporary scaffolding; remove once the context-loss culprit is fixed.
+ */
+interface SceneFlags {
+  noAll: boolean;
+  noVenue: boolean;
+  noDecks: boolean;
+  noLabels: boolean;
+}
+
+function useSceneFlags(): SceneFlags {
+  return useMemo(() => {
+    if (typeof window === "undefined") {
+      return { noAll: false, noVenue: false, noDecks: false, noLabels: false };
+    }
+    const query = new URLSearchParams(window.location.search);
+    const noAll = query.has("noall");
+    return {
+      noAll,
+      noVenue: noAll || query.has("novenue"),
+      noDecks: noAll || query.has("nodecks"),
+      noLabels: noAll || query.has("nolabels"),
+    };
+  }, []);
+}
 
 function buildVenueConfig(raw: Record<string, unknown>): Venue3DConfig {
   const venue = (raw.venue ?? { type: "arena", model_type: "procedural" }) as Venue3DConfig["venue"];
@@ -39,20 +70,22 @@ function buildVenueConfig(raw: Record<string, unknown>): Venue3DConfig {
   };
 }
 
-export function SeatScene() {
+export function SeatScene({ raw }: SeatSceneProps) {
   const venueGroupRef = useRef<THREE.Group>(null);
   const seatContainerRef = useRef<THREE.Group>(null);
   const deckGroupRef = useRef<THREE.Group>(null);
   const outlineGroupRef = useRef<THREE.Group>(null);
   const raycasterRef = useRef(new THREE.Raycaster());
   const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
+  const seatManager = useMemo(() => new SeatInstanceManager(), []);
 
   const { setHovered, hoveredId, selectedIds, activeSectionId, openSection, openSeatModal, closeSeatModal } =
     useSeatSelection();
   const { camera, gl } = useThree();
 
-  const layout = useMemo(() => getVenueLayout(largeStadiumSeatMapData), []);
+  const layout = useMemo(() => getVenueLayout(raw), [raw]);
   const sectionRenderer = useMemo(() => new SectionRenderer(), []);
+  const flags = useSceneFlags();
 
   const activeLayout = activeSectionId ? layout.sectionsById.get(activeSectionId) : undefined;
   const activeTierIndex = activeLayout?.tierIndex;
@@ -66,26 +99,38 @@ export function SeatScene() {
     [activeSectionId, activeTierIndex]
   );
 
-  // Venue shell: floor, ring or stage, and the outer wall. Built once per seat map.
+  // Venue shell: floor, ring or stage, and the outer wall. Rebuilt per seat map.
   useEffect(() => {
+    const host = venueGroupRef.current;
+    if (!host || flags.noVenue) return;
     const config = buildVenueConfig(
       (layout.seatMap.web_3d ?? {}) as Record<string, unknown>
     );
     const venueGroup = new TheatreGenerator().generate(config, layout.seatMap, layout.projection);
-    if (venueGroupRef.current) venueGroupRef.current.add(venueGroup);
-  }, [layout]);
+    host.add(venueGroup);
+    return () => {
+      host.remove(venueGroup);
+      venueGroup.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry.dispose();
+          const material = child.material as THREE.Material | THREE.Material[];
+          if (Array.isArray(material)) material.forEach((m) => m.dispose());
+          else material.dispose();
+        }
+      });
+    };
+  }, [layout, flags.noVenue]);
 
   // Every section is visible from the start as a solid deck. Only geometry changes.
-  const decks = useMemo(
-    () =>
-      layout.sections.map((section) => ({
-        id: section.id,
-        appearance: sectionAppearance(section),
-        mesh: sectionRenderer.createDeckMesh(section, layout.deckHeight, sectionAppearance(section)),
-        outline: sectionRenderer.createOutline(section, layout.deckHeight, sectionAppearance(section)),
-      })),
-    [layout, sectionRenderer, sectionAppearance]
-  );
+  const decks = useMemo(() => {
+    if (flags.noDecks) return [];
+    return layout.sections.map((section) => ({
+      id: section.id,
+      appearance: sectionAppearance(section),
+      mesh: sectionRenderer.createDeckMesh(section, layout.deckHeight, sectionAppearance(section)),
+      outline: sectionRenderer.createOutline(section, layout.deckHeight, sectionAppearance(section)),
+    }));
+  }, [layout, sectionRenderer, sectionAppearance, flags.noDecks]);
 
   useEffect(
     () => () => {
@@ -139,10 +184,14 @@ export function SeatScene() {
       }
     }
 
+    if (instances.length === 0) {
+      container.clear();
+      return;
+    }
     const mesh = seatManager.build(instances, { size: layout.seatBoxSize });
     container.clear();
     container.add(mesh);
-  }, [layout, activeLayout]);
+  }, [layout, activeLayout, seatManager]);
 
   // Paint selection and hover on top of the freshly built mesh.
   useEffect(() => {
@@ -156,9 +205,9 @@ export function SeatScene() {
           : "normal";
       seatManager.setSeatAppearance(seat.objectId, appearance);
     }
-  }, [activeLayout, selectedIds, hoveredId]);
+  }, [activeLayout, selectedIds, hoveredId, seatManager]);
 
-  useEffect(() => () => seatManager.dispose(), []);
+  useEffect(() => () => seatManager.dispose(), [seatManager]);
 
   const getPointerNdc = useCallback(
     (event: React.PointerEvent) => {
@@ -228,7 +277,7 @@ export function SeatScene() {
       }
       closeSeatModal();
     },
-    [camera, getPointerNdc, openSection, openSeatModal, closeSeatModal, activeLayout, layout, gl]
+    [camera, getPointerNdc, openSection, openSeatModal, closeSeatModal, activeLayout, layout, gl, seatManager]
   );
 
   const handlePointerMove = useCallback(
@@ -246,7 +295,7 @@ export function SeatScene() {
           : undefined;
       setHovered(objectId ?? null);
     },
-    [camera, getPointerNdc, setHovered]
+    [camera, getPointerNdc, setHovered, seatManager]
   );
 
   return (
@@ -268,26 +317,30 @@ export function SeatScene() {
         ))}
       </group>
       <group ref={seatContainerRef} />
-      {layout.sections.map((section) => (
-        <Text
-          key={section.id}
-          position={[
-            section.center.x,
-            section.elevation + layout.deckHeight + 0.35,
-            section.center.z,
-          ]}
-          fontSize={sectionRenderer.getLabelFontSize(section)}
-          color={section.id === activeSectionId ? "#ffffff" : "#e5e7eb"}
-          anchorX="center"
-          anchorY="middle"
-          renderOrder={10}
-          material-depthTest={false}
-          outlineWidth={0.04}
-          outlineColor="#111827"
-        >
-          {section.label}
-        </Text>
-      ))}
+      {!flags.noLabels && (
+        <Suspense fallback={null}>
+          {layout.sections.map((section) => (
+            <Text
+            key={section.id}
+            position={[
+              section.center.x,
+              section.elevation + layout.deckHeight + 0.35,
+              section.center.z,
+            ]}
+            fontSize={sectionRenderer.getLabelFontSize(section)}
+            color={section.id === activeSectionId ? "#ffffff" : "#e5e7eb"}
+            anchorX="center"
+            anchorY="middle"
+            renderOrder={10}
+            material-depthTest={false}
+            outlineWidth={0.04}
+            outlineColor="#111827"
+          >
+            {section.label}
+            </Text>
+          ))}
+        </Suspense>
+      )}
     </group>
   );
 }
